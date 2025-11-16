@@ -186,7 +186,7 @@ func (m *Model) StoreQA(question, answer string) error {
 	// Generate embeddings for the question and answer
 	questionEmbedding, err := m.VectorStore.Embed(question)
 	if err != nil {
-		log.Printf("Error embedding question: %v", err)
+		// log.Printf("Error embedding question: %v", err)
 		return fmt.Errorf("failed to embed question: %w", err)
 	}
 
@@ -198,7 +198,7 @@ func (m *Model) StoreQA(question, answer string) error {
 
 	// Store both question and answer in Qdrant
 	if err := m.VectorStore.StoreQA(question, answer, questionEmbedding, answerEmbedding); err != nil {
-		log.Printf("Error storing Q&A in Qdrant: %v", err)
+		// log.Printf("Error storing Q&A in Qdrant: %v", err)
 		return fmt.Errorf("failed to store Q&A in vector database: %w", err)
 	}
 
@@ -234,7 +234,7 @@ func (m *Model) StoreCurrentQuestion() {
 	// Check if the file exists
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
 		m.setStatus("No Q&A file found to index", 3*time.Second)
-		log.Printf("Q&A file not found at: %s", filename)
+		// log.Printf("Q&A file not found at: %s", filename)
 		return
 	}
 
@@ -242,7 +242,7 @@ func (m *Model) StoreCurrentQuestion() {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		errMsg := fmt.Sprintf("Failed to read Q&A file: %v", err)
-		log.Println(errMsg)
+		// log.Println(errMsg)
 		m.setStatus(errMsg, 5*time.Second)
 		return
 	}
@@ -251,14 +251,14 @@ func (m *Model) StoreCurrentQuestion() {
 	var qaFile QAFile
 	if err := json.Unmarshal(data, &qaFile); err != nil {
 		errMsg := fmt.Sprintf("Failed to parse Q&A file: %v", err)
-		log.Println(errMsg)
+		// log.Println(errMsg)
 		m.setStatus(errMsg, 5*time.Second)
 		return
 	}
 
 	if len(qaFile.QAs) == 0 {
 		m.setStatus("No Q&A pairs found to index", 3*time.Second)
-		log.Println("No Q&A pairs found in the file")
+		// log.Println("No Q&A pairs found in the file")
 		return
 	}
 
@@ -269,7 +269,7 @@ func (m *Model) StoreCurrentQuestion() {
 
 	for i, qa := range qaFile.QAs {
 		if qa.Question == "" || qa.Answer == "" {
-			log.Printf("Skipping empty Q&A at index %d", i)
+			// log.Printf("Skipping empty Q&A at index %d", i)
 			continue
 		}
 
@@ -280,7 +280,7 @@ func (m *Model) StoreCurrentQuestion() {
 		// Store the question and answer in the vector database
 		if err := m.StoreQA(qa.Question, qa.Answer); err != nil {
 			errMsg := fmt.Sprintf("Failed to index Q&A at index %d: %v", i, err)
-			log.Println(errMsg)
+			// log.Println(errMsg)
 			m.setStatus(errMsg, 3*time.Second)
 			continue
 		}
@@ -291,11 +291,11 @@ func (m *Model) StoreCurrentQuestion() {
 	// Final status update
 	if successCount > 0 {
 		msg := fmt.Sprintf("✅ Successfully indexed %d/%d Q&A pairs", successCount, totalQAs)
-		log.Println(msg)
+		// log.Println(msg)
 		m.setStatus(msg, 10*time.Second)
 	} else {
 		errMsg := "❌ No valid Q&A pairs were indexed"
-		log.Println(errMsg)
+		// log.Println(errMsg)
 		m.setStatus(errMsg, 5*time.Second)
 	}
 }

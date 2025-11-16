@@ -40,9 +40,9 @@ func main() {
 
 	// Initialize logger
 	logPath := filepath.Join(config.VaultPath(), "askai.log")
-	log.Println("Initializing logger at:", logPath)
-	log.Println("Vault path:", config.VaultPath())
-	log.Println("Full log path:", logPath)
+	// log.Println("Initializing logger at:", logPath)
+	// log.Println("Vault path:", config.VaultPath())
+	// log.Println("Full log path:", logPath)
 
 	// Create the log directory if it doesn't exist
 	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {

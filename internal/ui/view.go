@@ -9,17 +9,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	// optionStyle is the style for the options in the options screen
-	optionStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("205")).
-			MarginLeft(2)
-
-	// statusStyle is the style for status messages
-	statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("170")).
-			Italic(true)
-)
+// messageStyle is the style for chat messages
+var messageStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("15")). // White text
+	MarginLeft(1).
+	MarginRight(1).
+	Padding(1, 2).
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("62")).
+	Width(80) // Limit message width for better readability
 
 // renderOptions renders the options screen with a list of selectable options
 func (m Model) renderOptions() string {
@@ -34,7 +32,7 @@ func (m Model) renderOptions() string {
 		sb.WriteString("Enter model name (press Enter to save, Esc to cancel):\n")
 		sb.WriteString(m.ModelInput.View())
 		return sb.String()
-		
+
 	case m.EditingAPIURL:
 		sb.WriteString("Enter API URL (press Enter to save, Esc to cancel):\n")
 		sb.WriteString(m.APIURLInput.View())
@@ -45,7 +43,7 @@ func (m Model) renderOptions() string {
 	for i, option := range m.Options {
 		var optionText string
 		var valueText string
-		
+
 		// Add current value for relevant options
 		switch i {
 		case 0: // Model name
@@ -53,19 +51,18 @@ func (m Model) renderOptions() string {
 		case 2: // API URL
 			valueText = fmt.Sprintf(" (Current: %s)", config.APIURL())
 		}
-		
+
 		// Format the option text with selection indicator
 		if i == m.SelectedOpt {
 			optionText = fmt.Sprintf("➜ %s%s", option, valueText)
 		} else {
 			optionText = fmt.Sprintf("  %s%s", option, valueText)
 		}
-		
+
 		sb.WriteString(optionStyle.Render(optionText))
 		sb.WriteString("\n")
 	}
 
-	
 	return sb.String()
 }
 
@@ -78,10 +75,15 @@ func (m Model) View() string {
 	case types.ModeChat:
 		// Show the message content if it exists
 		if m.Msg != "" {
-			content = fmt.Sprintf("%s\n\n%s", m.Msg, m.TextInput.View())
+			// Format the message with a nice border and padding
+			msgContent := messageStyle.Render(m.Msg)
+			// Add some vertical space before the input
+			content = fmt.Sprintf("\n%s\n\n\n%s", msgContent, m.TextInput.View())
 		} else {
 			content = m.TextInput.View()
 		}
+
+		// Set instructions based on streaming state
 		if m.Streaming {
 			instructions = helpStyle.Render("Streaming… Press Esc to cancel, Ctrl+W to quit. Ctrl+O=Options.")
 		} else {
@@ -102,6 +104,7 @@ func (m Model) View() string {
 		statusBar = fmt.Sprintf("\n\n%s", statusStyle.Render(m.StatusMsg))
 	}
 
+	// Combine all components with proper spacing
 	return fmt.Sprintf("%s\n\n%s\n\n%s%s\n",
 		titleStyle.Render("AskAI"),
 		content,

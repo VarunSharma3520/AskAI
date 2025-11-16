@@ -68,7 +68,7 @@ func (qc *QdrantClient) StoreVector(id string, vector []float32, metadata map[st
 	})
 
 	if err != nil {
-		log.Printf("Failed to store vector: %v", err)
+		// log.Printf("Failed to store vector: %v", err)
 		return err
 	}
 

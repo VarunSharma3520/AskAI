@@ -1,8 +1,12 @@
 package llm
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
 	"strings"
+	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/parakeet-nest/parakeet/completion"
@@ -30,27 +34,56 @@ func StartStreamCmdWithCallback(apiURL, modelName, prompt string, temp float64,
 func startStreamCmdWithCallback(apiURL, modelName, prompt string, temp float64,
 	out chan<- string, errCh chan<- error, stopCh <-chan struct{}, responseCh chan<- string,
 ) tea.Cmd {
+	// log.Printf("Starting stream with model: %s, temperature: %.2f, prompt length: %d", modelName, temp, len(prompt))
+
+	// Create a context that will be canceled when the stream is stopped
+	ctx, cancel := context.WithCancel(context.Background())
+
 	opts := pkllm.SetOptions(map[string]interface{}{
 		string(option.Temperature): temp,
 	})
 
 	return func() tea.Msg {
 		go func() {
+			var fullResponse strings.Builder
+
+			// Handle panics and cleanup
+			var responseSent bool
+			var responseMutex sync.Mutex
+
 			defer func() {
-				// Recover from any panic during channel operations
+				cancel() // Cancel the context when we're done
+
 				if r := recover(); r != nil {
-					// Channel was closed, this is expected during cancellation
-					return
+					// errMsg := fmt.Sprintf("Stream panic: %v", r)
+					// log.Printf("ERROR: %s", errMsg)
+					// If we have an error channel, send the error if we haven't already
+					responseMutex.Lock()
+					defer responseMutex.Unlock()
+
+					if errCh != nil && !responseSent {
+						responseSent = true
+						select {
+						case errCh <- fmt.Errorf("stream panic: %v", r):
+							// log.Println("Sent panic to error channel")
+						default: // Don't block if channel is full
+							// log.Println("Error channel blocked, could not send panic")
+						}
+					}
+				} else {
+					// log.Println("Stream completed successfully")
+				}
+
+				// Close response channel if it exists and we haven't closed it yet
+				if responseCh != nil {
+					responseMutex.Lock()
+					defer responseMutex.Unlock()
+					if !responseSent {
+						close(responseCh)
+						responseSent = true
+					}
 				}
 			}()
-
-			// Create a local copy of channels to avoid race conditions
-			localOut := out
-			localErrCh := errCh
-			localResponseCh := responseCh
-
-			// Buffer to collect the full response
-			var fullResponse strings.Builder
 
 			q := pkllm.Query{
 				Model: modelName,
@@ -61,80 +94,94 @@ func startStreamCmdWithCallback(apiURL, modelName, prompt string, temp float64,
 				Stream:  true,
 			}
 
-			_, err := completion.ChatStream(apiURL, q, func(ans pkllm.Answer) error {
-				// Check if we should stop
+			// log.Println("Starting ChatStream...")
+			// Create a safe send function to prevent sending on closed channels
+			safeSendString := func(ch chan<- string, data string) bool {
+				if ch == nil {
+					return false
+				}
 				select {
-				case <-stopCh:
+				case ch <- data:
+					return true
+				case <-ctx.Done():
+					// log.Println("Context done, skipping send")
+					return false
+				default:
+					// log.Println("Channel blocked, skipping send")
+					return false
+				}
+			}
+
+			// log.Println("Starting ChatStream...")
+			_, err := completion.ChatStream(apiURL, q, func(ans pkllm.Answer) error {
+				// Check if context is done
+				select {
+				case <-ctx.Done():
+					// log.Println("Stream canceled by context")
 					return errors.New("stream canceled")
 				default:
 				}
 
-				// Safely send to the output channel
 				if s := ans.Message.Content; s != "" {
+					// log.Printf("Received chunk, length: %d", len(s))
+
 					// Add to full response
 					fullResponse.WriteString(s)
 
-					// Send to the response channel if provided
-					if localResponseCh != nil {
-						select {
-						case <-stopCh:
-							return errors.New("stream canceled")
-						case localResponseCh <- s:
-							// Successfully sent
+					// Send to output channels if they're not nil
+					if out != nil {
+						if !safeSendString(out, s) {
+							// log.Println("Failed to send chunk to output channel")
 						}
-					}
-
-					// Send to the output channel
-					select {
-					case <-stopCh:
-						return errors.New("stream canceled")
-					case localOut <- s:
-						// Successfully sent
 					}
 				}
 				return nil
 			})
 
-			// Send the full response to the callback channel if it exists
-			if localResponseCh != nil {
-				select {
-				case <-stopCh:
-					// Don't send if we're stopping
-				default:
-					sendFullResponse(localResponseCh, fullResponse.String())
-				}
-			}
-
-			// Send error if any, but only if the channel is still open
+			// Handle any errors that occurred during streaming
 			if err != nil {
-				select {
-				case <-stopCh:
-					// Don't send error if we're stopping
-				case localErrCh <- err:
-					// Error sent successfully
+				// errMsg := fmt.Sprintf("Error in ChatStream: %v", err)
+				// log.Printf("ERROR: %s", errMsg)
+				if errCh != nil {
+					select {
+					case errCh <- err:
+						// log.Println("Sent error to error channel")
+					default:
+						// log.Println("Error channel blocked, could not send error")
+					}
 				}
+				return
 			}
 
-			// Close the output channels
-			if localOut != nil {
-				close(localOut)
-			}
-			if localResponseCh != nil {
-				close(localResponseCh)
+			// Send the full response if we have a response channel
+			if responseCh != nil {
+				fullResp := fullResponse.String()
+				if fullResp != "" {
+					if sendFullResponse(ctx, responseCh, fullResp) {
+						// log.Printf("Sent full response to channel, length: %d", len(fullResp))
+					} else {
+						// log.Println("Failed to deliver full response to response channel")
+					}
+				}
 			}
 		}()
+
 		return nil
 	}
 }
 
-// sendFullResponse sends the full response to the channel in a non-blocking way
-func sendFullResponse(ch chan<- string, response string) {
-	go func() {
-		defer func() {
-			recover() // Ignore panic if channel is closed
-		}()
-		ch <- response
-	}()
+// sendFullResponse delivers the aggregated response and respects context cancellation
+func sendFullResponse(ctx context.Context, ch chan<- string, response string) bool {
+	if ch == nil || response == "" {
+		return false
+	}
+
+	select {
+	case ch <- response:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // NextTokenCmd waits for the next token or error/end signal.
@@ -143,14 +190,21 @@ func NextTokenCmd(ch <-chan string, errCh <-chan error) tea.Cmd {
 		select {
 		case err := <-errCh:
 			if err != nil {
+				// log.Printf("Received error in NextTokenCmd: %v", err)
 				return types.StreamErrMsg{Err: err}
 			}
-			return types.StreamEndMsg{}
-		case s, ok := <-ch:
+			return io.EOF
+		case token, ok := <-ch:
 			if !ok {
+				// log.Println("Token channel closed")
 				return types.StreamEndMsg{}
 			}
-			return types.TokenMsg(s)
+			if token == "" {
+				// log.Println("Received empty token")
+				return types.StreamEndMsg{}
+			}
+			// log.Printf("Received token, length: %d", len(token))
+			return types.TokenMsg(token)
 		}
 	}
 }

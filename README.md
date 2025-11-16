@@ -28,8 +28,7 @@ AskAI is a blazing-fast, privacy-focused AI assistant built with Go, designed fo
 ## Getting Started
 
 ### Prerequisites
-- Python 3.8+
-- pip (Python package manager)
+- Go 1.21+
 - tmux (recommended for best experience)
 - nvim (optional, for editor integration)
 
@@ -39,12 +38,8 @@ AskAI is a blazing-fast, privacy-focused AI assistant built with Go, designed fo
 git clone https://github.com/yourusername/AskAI.git
 cd AskAI
 
-# Create and activate virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # On Windows: .\venv\Scripts\activate
-
 # Install dependencies
-pip install -r requirements.txt
+go mod tidy
 ```
 
 ## 🖥️ Usage

@@ -56,14 +56,20 @@ func (m Model) Init() tea.Cmd {
 // - Custom messages for streaming responses
 // - Error handling
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// log.Println("Received message:", msg)
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 
 	case types.TokenMsg:
 		m.Msg += string(msg)
+		// Request an immediate re-render by returning a command that does nothing
 		if m.StreamCh != nil && m.ErrCh != nil {
-			return m, llm.NextTokenCmd(m.StreamCh, m.ErrCh)
+			return m, tea.Batch(
+				llm.NextTokenCmd(m.StreamCh, m.ErrCh),
+				// Force a re-render
+				func() tea.Msg { return nil },
+			)
 		}
 
 	case types.StreamEndMsg:
@@ -270,31 +276,42 @@ func (m *Model) handleAPIURLInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleChatInput() (tea.Model, tea.Cmd) {
 	question := m.TextInput.Value()
 	if question == "" {
+		// log.Println("Empty question, ignoring input")
 		return m, nil
 	}
 
+	// log.Printf("Processing question: %s", question)
 	m.LastQuestion = question
 	m.Msg = ""
 
 	// Initialize channels.
 	m.ensureChannels()
 	m.Streaming = true
+	// log.Println("Streaming started")
 
 	// Create a channel to collect the full response.
 	responseCh := make(chan string, 1)
 
 	// Start the streaming with the response collector.
+	// log.Printf("Starting stream with model: %s, temperature: %.2f", m.ModelName, m.Temperature)
 	start := llm.StartStreamCmdWithCallback(
 		config.APIURL(), m.ModelName, question, m.Temperature,
 		m.StreamCh, m.ErrCh, m.StopCh, responseCh,
 	)
+	// log.Println("Stream command started")
 
 	// Command to save the full response when it's ready.
 	saveCmd := func() tea.Msg {
-		if fullResponse := <-responseCh; fullResponse != "" {
+		// log.Println("Waiting for full response from channel...")
+		fullResponse := <-responseCh
+		// log.Printf("Received full response (length: %d)", len(fullResponse))
+
+		if fullResponse != "" {
 			// Save the conversation to the vault.
+			// log.Println("Saving conversation to vault...")
 			if err := m.StoreQA(question, fullResponse); err != nil {
-				log.Printf("Failed to save conversation: %v", err)
+				errMsg := fmt.Sprintf("Failed to save conversation: %v", err)
+				log.Println(errMsg)
 				return types.StatusMsg{
 					Message:  "Failed to save conversation",
 					Duration: 3 * time.Second,
@@ -368,6 +385,8 @@ func (m *Model) handleOptionsSelection() (tea.Model, tea.Cmd) {
 func (m *Model) handleStreamEnd() {
 	m.Streaming = false
 	m.safeCloseChannels()
+	// Force a re-render to update the UI
+	m.Update(nil)
 }
 
 // handleStreamError handles errors from the stream.
@@ -381,6 +400,8 @@ func (m *Model) handleStreamError() {
 			if err != nil {
 				m.Msg = "Error: " + err.Error()
 				m.safeCloseChannels()
+				// Force a re-render to show the error
+				m.Update(nil)
 				return
 			}
 		default:
@@ -389,6 +410,8 @@ func (m *Model) handleStreamError() {
 
 	m.Msg = "Error: An unknown error occurred during streaming"
 	m.safeCloseChannels()
+	// Force a re-render to show the error
+	m.Update(nil)
 }
 
 // ensureChannels initializes the necessary channels if they don't exist.
